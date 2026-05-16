@@ -8,6 +8,8 @@ Octosync is an Obsidian plugin that syncs a vault directly with GitHub without r
 
 It is built for people who like GitHub as a durable home for their notes, but do not want every device to be a developer workstation. Phones, tablets, locked-down work laptops, and lightweight machines can all be awkward places to install, authenticate, and maintain Git. Octosync talks to GitHub's API from inside Obsidian, so the device only needs Obsidian, the plugin, and a GitHub token with access to the repository you choose.
 
+Install from the [Obsidian Community Plugin directory](https://community.obsidian.md/plugins/octosync).
+
 ## Why Use It
 
 - Sync an Obsidian vault to a normal GitHub repository.
@@ -60,6 +62,8 @@ Octosync is free to use. If it saves you time and you want to support ongoing de
 Support is optional and does not unlock features.
 
 ## Manual Installation
+
+The easiest installation path is the [Obsidian Community Plugin directory](https://community.obsidian.md/plugins/octosync).
 
 Build or download the plugin files, then place them in:
 
