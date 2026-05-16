@@ -1,0 +1,10 @@
+node_modules/
+main.js
+*.map
+.DS_Store
+.obsidian/
+dist/
+tmp/
+.env
+.env.*
+!env.e2e.sample

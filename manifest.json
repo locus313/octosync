@@ -1,0 +1,10 @@
+{
+  "id": "octosync",
+  "name": "Octosync",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Sync an Obsidian vault directly with GitHub APIs on desktop and mobile.",
+  "author": "",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}

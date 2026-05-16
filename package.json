@@ -1,0 +1,32 @@
+{
+  "name": "octosync",
+  "version": "0.1.0",
+  "description": "An Obsidian plugin for syncing a vault directly with GitHub APIs.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs --watch",
+    "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
+    "test": "vitest run",
+    "test:e2e": "npm run build && node e2e/obsidian-e2e.mjs",
+    "local-install": "npm run build && node local-install.mjs",
+    "version": "node version-bump.mjs && git add manifest.json versions.json"
+  },
+  "keywords": [
+    "obsidian",
+    "obsidian-plugin",
+    "github",
+    "sync"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.28.0",
+    "obsidian": "^1.5.12",
+    "playwright-core": "^1.60.0",
+    "tslib": "^2.6.2",
+    "typescript": "^5.4.5",
+    "vitest": "^4.1.6"
+  }
+}
