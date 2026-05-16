@@ -93,6 +93,8 @@ Store the token in Octosync settings inside Obsidian. Octosync excludes `.obsidi
 
 ## Development
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines, sync safety expectations, and release notes.
+
 Install dependencies:
 
 ```bash
