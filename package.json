@@ -8,6 +8,7 @@
     "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
     "test": "vitest run",
     "test:e2e": "npm run build && node e2e/obsidian-e2e.mjs",
+    "screenshot:settings": "npm run build && node e2e/settings-screenshot.mjs",
     "local-install": "npm run build && node local-install.mjs",
     "version": "node version-bump.mjs && git add manifest.json versions.json"
   },

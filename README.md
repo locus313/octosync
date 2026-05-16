@@ -35,6 +35,10 @@ The toolbar icon can show when Octosync sees pending local changes. This is a lo
 
 Manual mode can separately check GitHub for remote changes on an interval. That check is read-only and only updates the visual indicator so you know a manual sync may be needed.
 
+## Settings
+
+![Octosync settings screen](docs/octosync-settings.png)
+
 ## Safety Net
 
 Sync tools need a high bar because mistakes can damage a vault. Octosync includes unit tests for the sync engine and GitHub client, plus an Obsidian end-to-end suite that launches a disposable vault against a temporary GitHub branch.
@@ -114,6 +118,14 @@ Build and install into a local vault:
 ```bash
 npm run local-install -- "/path/to/Your Vault"
 ```
+
+Regenerate the settings screenshot:
+
+```bash
+npm run screenshot:settings
+```
+
+The screenshot helper uses a disposable vault under `tmp/screenshots/` and refuses to run while Obsidian is already open.
 
 ## End-to-End Tests
 
