@@ -3,7 +3,7 @@
   "name": "Octosync",
   "version": "1.0.0",
   "minAppVersion": "1.5.0",
-  "description": "Sync an Obsidian vault directly with GitHub APIs on desktop and mobile.",
+  "description": "Sync your vault directly with GitHub APIs on desktop and mobile.",
   "author": "grumpydev",
   "authorUrl": "https://github.com/grumpydev",
   "isDesktopOnly": false
