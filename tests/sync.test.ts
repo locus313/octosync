@@ -122,6 +122,37 @@ describe("SyncManager", () => {
     expect(metadata.get("note.md")?.sha).toBe(oldSha);
   });
 
+  it("treats local files that block remote folders as conflicts", async () => {
+    const vault = new MemoryVault();
+    const github = new MockGitHubClient();
+    const metadata = await createMetadata();
+    vault.addFile("Notes", "local file\n");
+    await github.addRemoteFile("Notes/A.md", "remote nested\n");
+
+    const summary = await createManager(vault, github, metadata).planSync();
+
+    expect(summary.conflicts).toEqual(["Notes"]);
+    await expect(createManager(vault, github, metadata).sync()).rejects.toThrow(SyncConflictError);
+    expect(vault.readText("Notes")).toBe("local file\n");
+    expect(github.commits).toBe(0);
+  });
+
+  it("treats remote files that block local folders as conflicts", async () => {
+    const vault = new MemoryVault();
+    const github = new MockGitHubClient();
+    const metadata = await createMetadata();
+    vault.addFile("Notes/A.md", "local nested\n");
+    await github.addRemoteFile("Notes", "remote file\n");
+
+    const summary = await createManager(vault, github, metadata).planSync();
+
+    expect(summary.conflicts).toEqual(["Notes"]);
+    await expect(createManager(vault, github, metadata).sync()).rejects.toThrow(SyncConflictError);
+    expect(vault.readText("Notes/A.md")).toBe("local nested\n");
+    expect(await github.readRemoteText("Notes")).toBe("remote file\n");
+    expect(github.commits).toBe(0);
+  });
+
   it("downloads remote-only files and records metadata", async () => {
     const vault = new MemoryVault();
     const github = new MockGitHubClient();
@@ -328,6 +359,22 @@ describe("SyncManager", () => {
     const metadata = await createMetadata();
     const oldSha = await github.addBlob("old");
     vault.addFile("note.md", "old");
+    metadata.update("note.md", { sha: oldSha, dirty: false, deleted: false }, 1);
+    await github.addRemoteFile("note.md", "new");
+
+    const summary = await createManager(vault, github, metadata).sync();
+
+    expect(summary.downloaded).toBe(1);
+    expect(vault.readText("note.md")).toBe("new");
+  });
+
+  it("falls back to recreating an existing file when modifyBinary reports it already exists", async () => {
+    const vault = new MemoryVault();
+    const github = new MockGitHubClient();
+    const metadata = await createMetadata();
+    const oldSha = await github.addBlob("old");
+    vault.addFile("note.md", "old");
+    vault.failNextModifyBinary = new Error("File already exists.");
     metadata.update("note.md", { sha: oldSha, dirty: false, deleted: false }, 1);
     await github.addRemoteFile("note.md", "new");
 
@@ -576,6 +623,7 @@ describe("SyncManager", () => {
 class MemoryVault {
   private readonly files = new Map<string, { file: TFile; bytes: Uint8Array }>();
   private readonly folders = new Map<string, TFolder>();
+  failNextModifyBinary: Error | null = null;
 
   getFiles(): TFile[] {
     return Array.from(this.files.values()).map((entry) => entry.file);
@@ -599,6 +647,12 @@ class MemoryVault {
   }
 
   async modifyBinary(file: TFile, bytes: ArrayBuffer): Promise<void> {
+    if (this.failNextModifyBinary) {
+      const error = this.failNextModifyBinary;
+      this.failNextModifyBinary = null;
+      throw error;
+    }
+
     this.files.set(file.path, { file, bytes: new Uint8Array(bytes.slice(0)) });
   }
 

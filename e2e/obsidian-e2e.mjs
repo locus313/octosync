@@ -226,6 +226,31 @@ async function main() {
       await assertLocalFileContent(page, remoteOnlyPath, "must not download yet\n");
     });
 
+    await runTest("file-folder path conflicts stop before applying changes", async () => {
+      const localFileRemoteFolder = "shape-conflicts/local-file-remote-folder";
+      const remoteFileLocalFolder = "shape-conflicts/remote-file-local-folder";
+      await writeLocalFile(page, vaultPath, localFileRemoteFolder, "local file\n");
+      await github.writeFile(branch, `${localFileRemoteFolder}/remote.md`, "remote nested\n");
+
+      await writeLocalFile(page, vaultPath, `${remoteFileLocalFolder}/local.md`, "local nested\n");
+      await github.writeFile(branch, remoteFileLocalFolder, "remote file\n");
+
+      const summary = await syncNow(page);
+
+      assert.match(summary, /Sync stopped with 2 conflict/);
+      await assertLocalFileContent(page, localFileRemoteFolder, "local file\n");
+      await assertLocalFileContent(page, `${remoteFileLocalFolder}/local.md`, "local nested\n");
+      assert.equal(await github.readFile(branch, `${localFileRemoteFolder}/remote.md`), "remote nested\n");
+      assert.equal(await github.readFile(branch, remoteFileLocalFolder), "remote file\n");
+
+      await fs.rm(path.join(vaultPath, localFileRemoteFolder), { force: true });
+      await fs.rm(path.join(vaultPath, remoteFileLocalFolder), { recursive: true, force: true });
+      await github.deleteFile(branch, `${localFileRemoteFolder}/remote.md`);
+      await github.deleteFile(branch, remoteFileLocalFolder);
+      await assertLocalPathAbsent(page, localFileRemoteFolder);
+      await assertLocalPathAbsent(page, `${remoteFileLocalFolder}/local.md`);
+    });
+
     await runTest("simulate reports local/remote conflict without applying changes", async () => {
       await fs.writeFile(path.join(vaultPath, "local-e2e.md"), "local conflict\n", "utf8");
       await waitForRibbonClass(page, "has-local-changes");

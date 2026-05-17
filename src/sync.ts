@@ -277,7 +277,11 @@ export class SyncManager {
       metadataFiles: Object.keys(this.metadata.data.files).length,
     });
 
-    summary.conflicts = findFileConflicts(allPaths, local, remote.files, this.metadata);
+    const localFolders = this.getLocalFolders();
+    summary.conflicts = [
+      ...findPathShapeConflicts(local, localFolders, remote.files),
+      ...findFileConflicts(allPaths, local, remote.files, this.metadata),
+    ];
 
     if (summary.conflicts.length > 0) {
       return {
@@ -359,7 +363,7 @@ export class SyncManager {
     }
 
     const postFileLocalState = planPostFileLocalState(
-      this.getLocalFolders(),
+      localFolders,
       local,
       fileActions,
     );
@@ -802,8 +806,22 @@ export class SyncManager {
     const existing = this.vault.getAbstractFileByPath(path);
 
     if (existing instanceof TFile) {
-      await this.vault.modifyBinary(existing, bytes);
+      try {
+        await this.vault.modifyBinary(existing, bytes);
+      } catch (error) {
+        if (!isFileAlreadyExistsError(error)) {
+          throw error;
+        }
+
+        await this.vault.delete(existing);
+        await this.ensureParentFolder(path);
+        await this.vault.createBinary(path, bytes);
+      }
       return;
+    }
+
+    if (existing instanceof TFolder) {
+      throw new Error(`Cannot write file ${path}; a folder already exists there.`);
     }
 
     await this.ensureParentFolder(path);
@@ -1244,6 +1262,67 @@ function findFileConflicts(
   }
 
   return conflicts;
+}
+
+function findPathShapeConflicts(
+  localFiles: Map<string, LocalFileSnapshot>,
+  localFolders: Set<string>,
+  remoteFiles: Map<string, RemoteFile>,
+): string[] {
+  const conflicts = new Set<string>();
+  const remoteFolders = getRemoteFolders(remoteFiles);
+
+  for (const remoteFolderPath of remoteFolders) {
+    for (const ancestorPath of ancestorPathsInclusive(remoteFolderPath)) {
+      if (localFiles.has(ancestorPath) && !shouldIgnorePath(ancestorPath)) {
+        conflicts.add(ancestorPath);
+      }
+    }
+  }
+
+  for (const localFolderPath of localFolders) {
+    for (const ancestorPath of ancestorPathsInclusive(localFolderPath)) {
+      if (remoteFiles.has(ancestorPath) && !shouldIgnorePath(ancestorPath)) {
+        conflicts.add(ancestorPath);
+      }
+    }
+  }
+
+  return [...conflicts].sort();
+}
+
+function getRemoteFolders(remoteFiles: Map<string, RemoteFile>): Set<string> {
+  const folders = new Set<string>();
+
+  for (const remotePath of remoteFiles.keys()) {
+    addParentFolders(remotePath, folders);
+  }
+
+  for (const folderPath of getRemoteEmptyFolders(remoteFiles).keys()) {
+    if (!shouldIgnorePath(`${folderPath}/`)) {
+      folders.add(folderPath);
+    }
+  }
+
+  return folders;
+}
+
+function ancestorPathsInclusive(path: string): string[] {
+  const ancestors = [path];
+  let current = path;
+
+  while (current.includes("/")) {
+    current = parentFolderPath(current);
+    if (current) {
+      ancestors.push(current);
+    }
+  }
+
+  return ancestors;
+}
+
+function isFileAlreadyExistsError(error: unknown): boolean {
+  return error instanceof Error && /file already exists/i.test(error.message);
 }
 
 function isFileConflict(
