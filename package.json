@@ -1,6 +1,6 @@
 {
   "name": "octosync",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "An Obsidian plugin for syncing a vault directly with GitHub APIs.",
   "main": "main.js",
   "scripts": {
