@@ -356,6 +356,27 @@ export class OctosyncSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           });
       });
+
+    new Setting(containerEl)
+      .setName("Exclude patterns")
+      .setDesc(
+        "One path or filename per line. A pattern with a / is matched as a path prefix; a plain filename (no /) matches that filename anywhere in the vault. " +
+        "Known credential files such as secure-credentials.dat are always excluded from plugin sync regardless of this list.",
+      );
+
+    const excludeArea = containerEl.createEl("textarea", {
+      cls: "octosync-exclude-paths",
+    });
+    excludeArea.rows = 4;
+    excludeArea.placeholder = ".obsidian/plugins/some-plugin/data.json";
+    excludeArea.value = this.plugin.settings.syncExcludePaths.join("\n");
+    excludeArea.addEventListener("change", async () => {
+      this.plugin.settings.syncExcludePaths = excludeArea.value
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+      await this.plugin.saveSettings();
+    });
   }
 
   private addDebugSettings(containerEl: HTMLElement): void {

@@ -16,6 +16,11 @@ const RESERVED_FILES = new Set([
   ".DS_Store",
 ]);
 
+// Filenames under .obsidian/plugins/ that contain credentials and must never be synced.
+const SENSITIVE_PLUGIN_FILENAMES = new Set([
+  "secure-credentials.dat",
+]);
+
 const EMPTY_FOLDER_MARKER_NAME = ".octosync-folder";
 const EMPTY_FOLDER_MARKER_CONTENT = "Octosync placeholder for an empty Obsidian folder.\n";
 
@@ -1005,7 +1010,7 @@ export class SyncManager {
     );
   }
 
-  private shouldIgnorePath = (path: string): boolean => shouldIgnorePath(path, this.vault.configDir, getConfigAllowedPaths(this.settings, this.vault.configDir));
+  private shouldIgnorePath = (path: string): boolean => shouldIgnorePath(path, this.vault.configDir, getConfigAllowedPaths(this.settings, this.vault.configDir), this.settings.syncExcludePaths);
 }
 
 function createEmptySummary(): SyncSummary {
@@ -1266,7 +1271,7 @@ export function getConfigAllowedPaths(settings: OctosyncSettings, configDir: str
   return paths;
 }
 
-export function shouldIgnorePath(path: string, configDir: string, allowedConfigPaths: string[] = []): boolean {
+export function shouldIgnorePath(path: string, configDir: string, allowedConfigPaths: string[] = [], excludePatterns: string[] = []): boolean {
   const configPrefix = configDir.endsWith("/") ? configDir : `${configDir}/`;
 
   if (path === configDir || path.startsWith(configPrefix)) {
@@ -1274,6 +1279,18 @@ export function shouldIgnorePath(path: string, configDir: string, allowedConfigP
       const allowedPrefix = allowed.endsWith("/") ? allowed : `${allowed}/`;
       return path === allowed || path.startsWith(allowedPrefix);
     })) {
+      // Path is in the allow-list, but still enforce sensitive-file and user-defined exclusions.
+      const pluginsPrefix = `${configDir}/plugins/`;
+      const filename = path.split("/").pop() ?? "";
+
+      if (path.startsWith(pluginsPrefix) && SENSITIVE_PLUGIN_FILENAMES.has(filename)) {
+        return true;
+      }
+
+      if (excludePatterns.some((pattern) => matchesExcludePattern(path, pattern))) {
+        return true;
+      }
+
       return false;
     }
 
@@ -1285,6 +1302,22 @@ export function shouldIgnorePath(path: string, configDir: string, allowedConfigP
     isEmptyFolderMarkerPath(path) ||
     RESERVED_PREFIXES.some((prefix) => path.startsWith(prefix))
   );
+}
+
+/**
+ * Returns true when `path` matches `pattern`.
+ * - If `pattern` contains a `/`, it is treated as a path prefix: the path must equal the pattern
+ *   or start with `pattern + "/"`.
+ * - Otherwise the pattern is treated as a filename and is compared to the last path segment.
+ */
+export function matchesExcludePattern(path: string, pattern: string): boolean {
+  if (pattern.includes("/")) {
+    const prefix = pattern.endsWith("/") ? pattern : `${pattern}/`;
+    return path === pattern || path.startsWith(prefix);
+  }
+
+  const filename = path.split("/").pop() ?? "";
+  return filename === pattern;
 }
 
 function findFileConflicts(

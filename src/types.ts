@@ -18,6 +18,7 @@ export interface OctosyncSettings {
   syncCommunityPlugins: boolean;
   syncThemes: boolean;
   syncSnippets: boolean;
+  syncExcludePaths: string[];
   debugLogging: boolean;
   lastSyncStartedAt: number | null;
   lastSyncCompletedAt: number | null;
@@ -120,6 +121,7 @@ export const DEFAULT_SETTINGS: OctosyncSettings = {
   syncCommunityPlugins: false,
   syncThemes: false,
   syncSnippets: false,
+  syncExcludePaths: [],
   debugLogging: false,
   lastSyncStartedAt: null,
   lastSyncCompletedAt: null,

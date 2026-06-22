@@ -9,6 +9,7 @@ import {
   formatSummary,
   getConfigAllowedPaths,
   hasUserVisibleSyncChanges,
+  matchesExcludePattern,
   shouldIgnorePath,
 } from "../src/sync";
 import { DEFAULT_SETTINGS, type OctosyncSettings, type RemoteFile } from "../src/types";
@@ -83,6 +84,54 @@ describe("sync helpers", () => {
     expect(shouldIgnorePath(".obsidian/workspace.json", configDir, allowed)).toBe(true);
     expect(shouldIgnorePath(".obsidian/app.json", configDir, allowed)).toBe(true);
     expect(shouldIgnorePath(".obsidian/themes/mytheme.css", configDir, allowed)).toBe(true);
+  });
+
+  it("always excludes known sensitive plugin filenames even when syncCommunityPlugins is enabled", () => {
+    const configDir = ".obsidian";
+    const allowed = getConfigAllowedPaths({ ...DEFAULT_SETTINGS, syncCommunityPlugins: true }, configDir);
+
+    // secure-credentials.dat is blocked regardless of allow-list
+    expect(shouldIgnorePath(".obsidian/plugins/github-copilot/secure-credentials.dat", configDir, allowed)).toBe(true);
+
+    // Other plugin files are still synced
+    expect(shouldIgnorePath(".obsidian/plugins/github-copilot/main.js", configDir, allowed)).toBe(false);
+    expect(shouldIgnorePath(".obsidian/plugins/github-copilot/data.json", configDir, allowed)).toBe(false);
+    expect(shouldIgnorePath(".obsidian/plugins/github-copilot/manifest.json", configDir, allowed)).toBe(false);
+  });
+
+  it("respects user-defined exclude patterns via shouldIgnorePath", () => {
+    const configDir = ".obsidian";
+    const allowed = getConfigAllowedPaths({ ...DEFAULT_SETTINGS, syncCommunityPlugins: true }, configDir);
+
+    // Path-prefix pattern
+    const excludeByPath = [".obsidian/plugins/some-plugin/data.json"];
+    expect(shouldIgnorePath(".obsidian/plugins/some-plugin/data.json", configDir, allowed, excludeByPath)).toBe(true);
+    expect(shouldIgnorePath(".obsidian/plugins/other-plugin/data.json", configDir, allowed, excludeByPath)).toBe(false);
+
+    // Folder-prefix pattern
+    const excludeByFolder = [".obsidian/plugins/some-plugin"];
+    expect(shouldIgnorePath(".obsidian/plugins/some-plugin/main.js", configDir, allowed, excludeByFolder)).toBe(true);
+    expect(shouldIgnorePath(".obsidian/plugins/some-plugin", configDir, allowed, excludeByFolder)).toBe(true);
+    expect(shouldIgnorePath(".obsidian/plugins/other-plugin/main.js", configDir, allowed, excludeByFolder)).toBe(false);
+
+    // Filename-only pattern (no slash) matches anywhere
+    const excludeByName = ["data.json"];
+    expect(shouldIgnorePath(".obsidian/plugins/some-plugin/data.json", configDir, allowed, excludeByName)).toBe(true);
+    expect(shouldIgnorePath(".obsidian/plugins/other-plugin/data.json", configDir, allowed, excludeByName)).toBe(true);
+    expect(shouldIgnorePath(".obsidian/plugins/some-plugin/main.js", configDir, allowed, excludeByName)).toBe(false);
+  });
+
+  it("matchesExcludePattern handles path-prefix and filename patterns", () => {
+    // Path prefix (contains /)
+    expect(matchesExcludePattern(".obsidian/plugins/foo/data.json", ".obsidian/plugins/foo/data.json")).toBe(true);
+    expect(matchesExcludePattern(".obsidian/plugins/foo/main.js", ".obsidian/plugins/foo")).toBe(true);
+    expect(matchesExcludePattern(".obsidian/plugins/foo/sub/file.js", ".obsidian/plugins/foo")).toBe(true);
+    expect(matchesExcludePattern(".obsidian/plugins/foobar/main.js", ".obsidian/plugins/foo")).toBe(false);
+
+    // Filename only (no /)
+    expect(matchesExcludePattern("notes/data.json", "data.json")).toBe(true);
+    expect(matchesExcludePattern(".obsidian/plugins/foo/data.json", "data.json")).toBe(true);
+    expect(matchesExcludePattern(".obsidian/plugins/foo/main.js", "data.json")).toBe(false);
   });
 
   it("getConfigAllowedPaths returns correct paths based on settings", () => {
