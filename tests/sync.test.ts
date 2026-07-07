@@ -84,6 +84,11 @@ describe("sync helpers", () => {
     expect(shouldIgnorePath(".obsidian/workspace.json", configDir, allowed)).toBe(true);
     expect(shouldIgnorePath(".obsidian/app.json", configDir, allowed)).toBe(true);
     expect(shouldIgnorePath(".obsidian/plugins/some-plugin/data.json", configDir, allowed)).toBe(true);
+
+    // Reserved filenames and Octosync markers are ignored even inside allowed config paths
+    expect(shouldIgnorePath(".obsidian/themes/foo/.octosync-folder", configDir, allowed)).toBe(true);
+    expect(shouldIgnorePath(".obsidian/themes/foo/.DS_Store", configDir, allowed)).toBe(true);
+    expect(shouldIgnorePath(".obsidian/community-plugins.json", configDir, allowed)).toBe(false);
   });
 
   it("respects user-defined exclude patterns via shouldIgnorePath", () => {

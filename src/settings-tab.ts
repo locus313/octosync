@@ -368,7 +368,7 @@ export class OctosyncSettingTab extends PluginSettingTab {
       cls: "octosync-exclude-paths",
     });
     excludeArea.rows = 4;
-    excludeArea.placeholder = ".obsidian/plugins/some-plugin/data.json";
+    excludeArea.placeholder = ".obsidian/themes/my-theme";
     excludeArea.value = this.plugin.settings.syncExcludePaths.join("\n");
     excludeArea.addEventListener("change", async () => {
       this.plugin.settings.syncExcludePaths = excludeArea.value

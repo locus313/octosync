@@ -1273,7 +1273,16 @@ export function shouldIgnorePath(path: string, configDir: string, allowedConfigP
       const allowedPrefix = allowed.endsWith("/") ? allowed : `${allowed}/`;
       return path === allowed || path.startsWith(allowedPrefix);
     })) {
-      if (excludePatterns.some((pattern) => matchesExcludePattern(path, pattern))) {
+      // Even inside an allowed config path, reserved filenames and Octosync's own
+      // empty-folder markers must still be excluded. Use filename-based matching so
+      // that e.g. .DS_Store inside a theme folder is treated the same as at the root.
+      const filename = path.split("/").pop() ?? "";
+
+      if (
+        RESERVED_FILES.has(filename) ||
+        isEmptyFolderMarkerPath(path) ||
+        excludePatterns.some((pattern) => matchesExcludePattern(path, pattern))
+      ) {
         return true;
       }
 
