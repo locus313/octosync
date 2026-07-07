@@ -322,7 +322,7 @@ export class OctosyncSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Sync community plugins")
       .setDesc(
-        "Sync the .obsidian/plugins folder and community-plugins.json. Enables plugins and their data to roam across devices.",
+        "Sync community-plugins.json so new devices know which plugins to install. Plugin data folders are not synced to avoid accidentally sharing API keys or tokens stored in plugin settings.",
       )
       .addToggle((toggle) => {
         toggle
@@ -360,8 +360,8 @@ export class OctosyncSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Exclude patterns")
       .setDesc(
-        "One path or filename per line. A pattern with a / is matched as a path prefix; a plain filename (no /) matches that filename anywhere in the vault. " +
-        "Known credential files such as secure-credentials.dat are always excluded from plugin sync regardless of this list.",
+        "One path or filename per line. Patterns apply only to the Obsidian config paths enabled above. " +
+        "A pattern with a / is matched as a path prefix (e.g. .obsidian/themes/my-theme); a plain filename (no /) matches that filename within any synced config path.",
       );
 
     const excludeArea = containerEl.createEl("textarea", {
