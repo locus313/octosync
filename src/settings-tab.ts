@@ -315,6 +315,7 @@ export class OctosyncSettingTab extends PluginSettingTab {
   }
 
   private addObsidianSyncSettings(containerEl: HTMLElement): void {
+    const configDir = this.plugin.app.vault.configDir;
     new Setting(containerEl)
       .setName("Obsidian config sync")
       .setHeading();
@@ -335,7 +336,7 @@ export class OctosyncSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Sync themes")
-      .setDesc("Sync the .obsidian/themes folder so custom themes are available on all devices.")
+      .setDesc(`Sync the ${configDir}/themes folder so custom themes are available on all devices.`)
       .addToggle((toggle) => {
         toggle
           .setValue(this.plugin.settings.syncThemes)
@@ -347,7 +348,7 @@ export class OctosyncSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Sync CSS snippets")
-      .setDesc("Sync the .obsidian/snippets folder so custom CSS snippets are available on all devices.")
+      .setDesc(`Sync the ${configDir}/snippets folder so custom CSS snippets are available on all devices.`)
       .addToggle((toggle) => {
         toggle
           .setValue(this.plugin.settings.syncSnippets)
@@ -361,21 +362,21 @@ export class OctosyncSettingTab extends PluginSettingTab {
       .setName("Exclude patterns")
       .setDesc(
         "One path or filename per line. Patterns apply only to the Obsidian config paths enabled above. " +
-        "A pattern with a / is matched as a path prefix (e.g. .obsidian/themes/my-theme); a plain filename (no /) matches that filename within any synced config path.",
+        `A pattern with a / is matched as a path prefix (e.g. ${configDir}/themes/my-theme); a plain filename (no /) matches that filename within any synced config path.`,
       );
 
     const excludeArea = containerEl.createEl("textarea", {
       cls: "octosync-exclude-paths",
     });
     excludeArea.rows = 4;
-    excludeArea.placeholder = ".obsidian/themes/my-theme";
+    excludeArea.placeholder = `${configDir}/themes/my-theme`;
     excludeArea.value = this.plugin.settings.syncExcludePaths.join("\n");
-    excludeArea.addEventListener("change", async () => {
+    excludeArea.addEventListener("change", () => {
       this.plugin.settings.syncExcludePaths = excludeArea.value
         .split("\n")
         .map((line) => line.trim())
         .filter((line) => line.length > 0);
-      await this.plugin.saveSettings();
+      void this.plugin.saveSettings();
     });
   }
 

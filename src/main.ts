@@ -579,13 +579,8 @@ export default class OctosyncPlugin extends Plugin {
   }
 
   private async loadPluginData(): Promise<OctosyncPluginData> {
-    const data: unknown = await this.loadData();
-
-    if (!data || typeof data !== "object") {
-      return {};
-    }
-
-    return data as OctosyncPluginData;
+    const data = await this.loadData() as OctosyncPluginData | null | undefined;
+    return data ?? {};
   }
 
   private async savePluginData(patch: OctosyncPluginData): Promise<void> {
