@@ -165,6 +165,43 @@ describe("SyncManager", () => {
     expect(github.commits).toBe(1);
   });
 
+  it("syncs allowed config-dir files when the corresponding setting is enabled", async () => {
+    const vault = new MemoryVault();
+    const github = new MockGitHubClient();
+    const metadata = await createMetadata();
+
+    vault.addFile("note.md", "vault note");
+    vault.addFile(".obsidian/community-plugins.json", '["dataview"]');
+    vault.addFile(".obsidian/themes/my-theme/theme.css", "body { color: red; }");
+    vault.addFile(".obsidian/snippets/custom.css", ".highlight { background: yellow; }");
+    vault.addFile(".obsidian/workspace.json", '{"main":{"id":"main"}}');
+
+    const syncSettings = {
+      ...settings,
+      syncCommunityPlugins: true,
+      syncThemes: true,
+      syncSnippets: true,
+    };
+    const manager = new SyncManager(
+      vault as never,
+      { trashFile: (file: TFile | TFolder) => vault.delete(file) } as never,
+      github as unknown as GitHubClient,
+      metadata,
+      syncSettings,
+      undefined,
+    );
+    const summary = await manager.sync();
+
+    // vault note + community-plugins.json + theme + snippet = 4 uploads
+    expect(summary.uploaded).toBe(4);
+    expect(await github.readRemoteText("note.md")).toBe("vault note");
+    expect(await github.readRemoteText(".obsidian/community-plugins.json")).toBe('["dataview"]');
+    expect(await github.readRemoteText(".obsidian/themes/my-theme/theme.css")).toBe("body { color: red; }");
+    expect(await github.readRemoteText(".obsidian/snippets/custom.css")).toBe(".highlight { background: yellow; }");
+    // workspace.json is not in the allow-list and must not have synced
+    expect(github.remote.has(".obsidian/workspace.json")).toBe(false);
+  });
+
   it("plans sync without changing local files, remote files, or metadata", async () => {
     const vault = new MemoryVault();
     const github = new MockGitHubClient();
