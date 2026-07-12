@@ -20,7 +20,7 @@ const EMPTY_FOLDER_MARKER_NAME = ".octosync-folder";
 const EMPTY_FOLDER_MARKER_CONTENT = "Octosync placeholder for an empty Obsidian folder.\n";
 
 interface LocalFileSnapshot {
-  file: TFile;
+  file: TFile | null; // null for config-dir files enumerated via vault.adapter
   path: string;
   sha: string;
   bytes: ArrayBuffer;
@@ -62,7 +62,7 @@ type FilePlanAction =
   | { type: "upload"; path: string; file: LocalFileSnapshot; blobSha?: string }
   | { type: "download"; path: string; sha: string }
   | { type: "deleteRemote"; path: string }
-  | { type: "deleteLocal"; path: string; file: TFile }
+  | { type: "deleteLocal"; path: string; file: LocalFileSnapshot }
   | { type: "metadata"; path: string; sha: string | null; deleted: boolean };
 
 type FolderPlanAction =
@@ -349,7 +349,7 @@ export class SyncManager {
           continue;
         }
 
-        fileActions.push({ type: "deleteLocal", path, file: localFile.file });
+        fileActions.push({ type: "deleteLocal", path, file: localFile });
         summary.deletedLocal += 1;
         continue;
       }
@@ -648,7 +648,7 @@ export class SyncManager {
               summary.uploaded += 1;
             }
 
-            await this.deleteLocalFile(localFile.file);
+            await this.deleteLocalFile(localFile);
             this.metadata.update(path, { sha: null, deleted: true, dirty: false }, now);
             summary.deletedLocal += 1;
           }
@@ -707,10 +707,61 @@ export class SyncManager {
       });
     }
 
+    // Config-dir files (themes, snippets, community-plugins.json) are hidden from
+    // vault.getFiles() by Obsidian's Vault API. Enumerate them via the adapter instead.
+    await this.addConfigDirLocalFiles(snapshots);
+
     return snapshots;
   }
 
+  private async addConfigDirLocalFiles(snapshots: Map<string, LocalFileSnapshot>): Promise<void> {
+    const allowedPaths = getConfigAllowedPaths(this.settings, this.vault.configDir);
+    for (const allowedPath of allowedPaths) {
+      await this.scanAdapterPath(snapshots, allowedPath);
+    }
+  }
+
+  private async scanAdapterPath(snapshots: Map<string, LocalFileSnapshot>, path: string): Promise<void> {
+    if (this.shouldIgnorePath(path)) {
+      return;
+    }
+
+    const stat = await this.vault.adapter.stat(path);
+    if (!stat) {
+      return;
+    }
+
+    if (stat.type === "file") {
+      const bytes = await this.vault.adapter.readBinary(path);
+      snapshots.set(path, { file: null, path, sha: await gitBlobSha(bytes), bytes });
+      return;
+    }
+
+    const listed = await this.vault.adapter.list(path);
+    for (const filePath of listed.files) {
+      if (!this.shouldIgnorePath(filePath)) {
+        const bytes = await this.vault.adapter.readBinary(filePath);
+        snapshots.set(filePath, { file: null, path: filePath, sha: await gitBlobSha(bytes), bytes });
+      }
+    }
+    for (const folderPath of listed.folders) {
+      await this.scanAdapterPath(snapshots, folderPath);
+    }
+  }
+
   private async getLocalFile(path: string): Promise<LocalFileSnapshot | null> {
+    if (this.isConfigDirPath(path)) {
+      if (this.shouldIgnorePath(path)) {
+        return null;
+      }
+      const stat = await this.vault.adapter.stat(path);
+      if (!stat || stat.type !== "file") {
+        return null;
+      }
+      const bytes = await this.vault.adapter.readBinary(path);
+      return { file: null, path, sha: await gitBlobSha(bytes), bytes };
+    }
+
     const file = this.vault.getAbstractFileByPath(path);
 
     if (!(file instanceof TFile) || this.shouldIgnorePath(file.path)) {
@@ -807,6 +858,12 @@ export class SyncManager {
   }
 
   private async writeBlob(path: string, bytes: ArrayBuffer): Promise<void> {
+    if (this.isConfigDirPath(path)) {
+      await this.ensureParentFolderAdapter(path);
+      await this.vault.adapter.writeBinary(path, bytes);
+      return;
+    }
+
     const existing = this.vault.getAbstractFileByPath(path);
 
     if (existing instanceof TFile) {
@@ -832,16 +889,25 @@ export class SyncManager {
     await this.vault.createBinary(path, bytes);
   }
 
-  private async deleteLocalFile(file: TFile): Promise<void> {
-    await this.fileManager.trashFile(file);
+  private async deleteLocalFile(snapshot: LocalFileSnapshot): Promise<void> {
+    if (snapshot.file !== null) {
+      await this.fileManager.trashFile(snapshot.file);
+    } else {
+      await this.vault.adapter.remove(snapshot.path);
+    }
   }
 
   private async createLocalConflictCopy(
     file: LocalFileSnapshot,
   ): Promise<{ path: string; bytes: ArrayBuffer }> {
     const conflictPath = await this.nextConflictPath(file.path);
-    await this.ensureParentFolder(conflictPath);
-    await this.vault.createBinary(conflictPath, file.bytes);
+    if (this.isConfigDirPath(conflictPath)) {
+      await this.ensureParentFolderAdapter(conflictPath);
+      await this.vault.adapter.writeBinary(conflictPath, file.bytes);
+    } else {
+      await this.ensureParentFolder(conflictPath);
+      await this.vault.createBinary(conflictPath, file.bytes);
+    }
     return {
       path: conflictPath,
       bytes: file.bytes,
@@ -874,6 +940,14 @@ export class SyncManager {
   }
 
   private async ensureFolder(path: string): Promise<void> {
+    if (this.isConfigDirPath(path)) {
+      await this.ensureParentFolderAdapter(path);
+      if (!await this.vault.adapter.exists(path)) {
+        await this.vault.adapter.mkdir(path);
+      }
+      return;
+    }
+
     const parts = path.split("/");
     let current = "";
 
@@ -932,6 +1006,23 @@ export class SyncManager {
 
       await this.vault.createFolder(current);
     }
+  }
+
+  private async ensureParentFolderAdapter(path: string): Promise<void> {
+    const parts = path.split("/").slice(0, -1);
+    let current = "";
+
+    for (const part of parts) {
+      current = current ? `${current}/${part}` : part;
+      if (!await this.vault.adapter.exists(current)) {
+        await this.vault.adapter.mkdir(current);
+      }
+    }
+  }
+
+  private isConfigDirPath(path: string): boolean {
+    const configPrefix = `${this.vault.configDir}/`;
+    return path === this.vault.configDir || path.startsWith(configPrefix);
   }
 
   private async commitTreeUpdates(

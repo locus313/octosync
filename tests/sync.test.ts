@@ -740,13 +740,70 @@ class MemoryVault {
   readonly configDir = ".obsidian";
   failNextModifyBinary: Error | null = null;
 
+  // Mirrors real Obsidian behaviour: vault.getFiles() does not return files inside
+  // the hidden config directory. Config-dir files are only accessible via adapter.
   getFiles(): TFile[] {
-    return Array.from(this.files.values()).map((entry) => entry.file);
+    const configPrefix = `${this.configDir}/`;
+    return Array.from(this.files.values())
+      .filter((entry) => !entry.file.path.startsWith(configPrefix))
+      .map((entry) => entry.file);
   }
 
   getAllLoadedFiles(): Array<TFile | TFolder> {
     return [...this.folders.values(), ...this.getFiles()];
   }
+
+  readonly adapter = {
+    stat: async (path: string): Promise<{ type: "file" | "folder"; ctime: number; mtime: number; size: number } | null> => {
+      if (this.files.has(path)) return { type: "file", ctime: 0, mtime: 0, size: this.files.get(path)!.bytes.length };
+      if (this.folders.has(path)) return { type: "folder", ctime: 0, mtime: 0, size: 0 };
+      return null;
+    },
+    list: async (path: string): Promise<{ files: string[]; folders: string[] }> => {
+      const prefix = path.endsWith("/") ? path : `${path}/`;
+      const files: string[] = [];
+      const folders: string[] = [];
+      for (const filePath of this.files.keys()) {
+        if (filePath.startsWith(prefix) && !filePath.slice(prefix.length).includes("/")) {
+          files.push(filePath);
+        }
+      }
+      for (const folderPath of this.folders.keys()) {
+        if (folderPath.startsWith(prefix) && !folderPath.slice(prefix.length).includes("/")) {
+          folders.push(folderPath);
+        }
+      }
+      return { files, folders };
+    },
+    readBinary: async (path: string): Promise<ArrayBuffer> => {
+      const entry = this.files.get(path);
+      if (!entry) throw new Error(`Missing file ${path}`);
+      return cloneBuffer(entry.bytes);
+    },
+    writeBinary: async (path: string, bytes: ArrayBuffer): Promise<void> => {
+      const existing = this.files.get(path);
+      if (existing) {
+        this.files.set(path, { file: existing.file, bytes: new Uint8Array(bytes.slice(0)) });
+      } else {
+        const file = new TFile(path);
+        this.files.set(path, { file, bytes: new Uint8Array(bytes.slice(0)) });
+        this.addChild(file);
+      }
+    },
+    exists: async (path: string): Promise<boolean> => {
+      return this.files.has(path) || this.folders.has(path);
+    },
+    mkdir: async (path: string): Promise<void> => {
+      this.addFolder(path);
+    },
+    remove: async (path: string): Promise<void> => {
+      const entry = this.files.get(path);
+      if (entry) {
+        this.files.delete(path);
+        this.removeChild(entry.file);
+      }
+    },
+  };
 
   async readBinary(file: TFile): Promise<ArrayBuffer> {
     const entry = this.files.get(file.path);
