@@ -7,7 +7,9 @@ import {
   SyncConflictError,
   SyncManager,
   formatSummary,
+  getConfigAllowedPaths,
   hasUserVisibleSyncChanges,
+  matchesExcludePattern,
   shouldIgnorePath,
 } from "../src/sync";
 import { DEFAULT_SETTINGS, type OctosyncSettings, type RemoteFile } from "../src/types";
@@ -67,6 +69,79 @@ describe("sync helpers", () => {
     expect(shouldIgnorePath("empty/.octosync-folder", ".custom-obsidian")).toBe(true);
     expect(shouldIgnorePath("notes/.gitignore", ".custom-obsidian")).toBe(false);
     expect(shouldIgnorePath("notes/today.md", ".custom-obsidian")).toBe(false);
+  });
+
+  it("allows config subpaths that are in the allowedConfigPaths list", () => {
+    const configDir = ".obsidian";
+    const allowed = [".obsidian/community-plugins.json", ".obsidian/themes"];
+
+    // Allowed paths should not be ignored
+    expect(shouldIgnorePath(".obsidian/community-plugins.json", configDir, allowed)).toBe(false);
+    expect(shouldIgnorePath(".obsidian/themes", configDir, allowed)).toBe(false);
+    expect(shouldIgnorePath(".obsidian/themes/my-theme/theme.css", configDir, allowed)).toBe(false);
+
+    // Non-allowed config paths are still ignored
+    expect(shouldIgnorePath(".obsidian/workspace.json", configDir, allowed)).toBe(true);
+    expect(shouldIgnorePath(".obsidian/app.json", configDir, allowed)).toBe(true);
+    expect(shouldIgnorePath(".obsidian/plugins/some-plugin/data.json", configDir, allowed)).toBe(true);
+
+    // Reserved filenames and Octosync markers are ignored even inside allowed config paths
+    expect(shouldIgnorePath(".obsidian/themes/foo/.octosync-folder", configDir, allowed)).toBe(true);
+    expect(shouldIgnorePath(".obsidian/themes/foo/.DS_Store", configDir, allowed)).toBe(true);
+    expect(shouldIgnorePath(".obsidian/community-plugins.json", configDir, allowed)).toBe(false);
+  });
+
+  it("respects user-defined exclude patterns via shouldIgnorePath", () => {
+    const configDir = ".obsidian";
+    const allowed = getConfigAllowedPaths({ ...DEFAULT_SETTINGS, syncThemes: true }, configDir);
+
+    // Path-prefix pattern excludes a specific theme folder
+    const excludeByPath = [".obsidian/themes/my-theme"];
+    expect(shouldIgnorePath(".obsidian/themes/my-theme/theme.css", configDir, allowed, excludeByPath)).toBe(true);
+    expect(shouldIgnorePath(".obsidian/themes/my-theme", configDir, allowed, excludeByPath)).toBe(true);
+    expect(shouldIgnorePath(".obsidian/themes/other-theme/theme.css", configDir, allowed, excludeByPath)).toBe(false);
+
+    // Filename-only pattern matches within synced config paths
+    const excludeByName = ["theme.css"];
+    expect(shouldIgnorePath(".obsidian/themes/my-theme/theme.css", configDir, allowed, excludeByName)).toBe(true);
+    expect(shouldIgnorePath(".obsidian/themes/my-theme/manifest.json", configDir, allowed, excludeByName)).toBe(false);
+  });
+
+  it("matchesExcludePattern handles path-prefix and filename patterns", () => {
+    // Path prefix (contains /)
+    expect(matchesExcludePattern(".obsidian/plugins/foo/data.json", ".obsidian/plugins/foo/data.json")).toBe(true);
+    expect(matchesExcludePattern(".obsidian/plugins/foo/main.js", ".obsidian/plugins/foo")).toBe(true);
+    expect(matchesExcludePattern(".obsidian/plugins/foo/sub/file.js", ".obsidian/plugins/foo")).toBe(true);
+    expect(matchesExcludePattern(".obsidian/plugins/foobar/main.js", ".obsidian/plugins/foo")).toBe(false);
+
+    // Filename only (no /)
+    expect(matchesExcludePattern("notes/data.json", "data.json")).toBe(true);
+    expect(matchesExcludePattern(".obsidian/plugins/foo/data.json", "data.json")).toBe(true);
+    expect(matchesExcludePattern(".obsidian/plugins/foo/main.js", "data.json")).toBe(false);
+  });
+
+  it("getConfigAllowedPaths returns correct paths based on settings", () => {
+    const configDir = ".obsidian";
+
+    expect(
+      getConfigAllowedPaths({ ...DEFAULT_SETTINGS, syncCommunityPlugins: false, syncThemes: false, syncSnippets: false }, configDir),
+    ).toEqual([]);
+
+    expect(
+      getConfigAllowedPaths({ ...DEFAULT_SETTINGS, syncCommunityPlugins: true }, configDir),
+    ).toEqual([".obsidian/community-plugins.json"]);
+
+    expect(
+      getConfigAllowedPaths({ ...DEFAULT_SETTINGS, syncThemes: true }, configDir),
+    ).toEqual([".obsidian/themes"]);
+
+    expect(
+      getConfigAllowedPaths({ ...DEFAULT_SETTINGS, syncSnippets: true }, configDir),
+    ).toEqual([".obsidian/snippets"]);
+
+    expect(
+      getConfigAllowedPaths({ ...DEFAULT_SETTINGS, syncCommunityPlugins: true, syncThemes: true, syncSnippets: true }, configDir),
+    ).toEqual([".obsidian/community-plugins.json", ".obsidian/themes", ".obsidian/snippets"]);
   });
 });
 

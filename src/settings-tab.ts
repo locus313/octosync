@@ -50,6 +50,7 @@ export class OctosyncSettingTab extends PluginSettingTab {
     }
 
     this.addSyncSettings(containerEl);
+    this.addObsidianSyncSettings(containerEl);
     this.addDebugSettings(containerEl);
     this.addActions(containerEl);
     this.addSupport(containerEl);
@@ -311,6 +312,72 @@ export class OctosyncSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Last sync")
       .setDesc(this.plugin.settings.lastSyncSummary || "No completed sync yet.");
+  }
+
+  private addObsidianSyncSettings(containerEl: HTMLElement): void {
+    const configDir = this.plugin.app.vault.configDir;
+    new Setting(containerEl)
+      .setName("Obsidian config sync")
+      .setHeading();
+
+    new Setting(containerEl)
+      .setName("Sync community plugins")
+      .setDesc(
+        "Sync community-plugins.json so new devices know which plugins to install. Plugin data folders are not synced to avoid accidentally sharing API keys or tokens stored in plugin settings.",
+      )
+      .addToggle((toggle) => {
+        toggle
+          .setValue(this.plugin.settings.syncCommunityPlugins)
+          .onChange(async (value) => {
+            this.plugin.settings.syncCommunityPlugins = value;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("Sync themes")
+      .setDesc(`Sync the ${configDir}/themes folder so custom themes are available on all devices.`)
+      .addToggle((toggle) => {
+        toggle
+          .setValue(this.plugin.settings.syncThemes)
+          .onChange(async (value) => {
+            this.plugin.settings.syncThemes = value;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("Sync CSS snippets")
+      .setDesc(`Sync the ${configDir}/snippets folder so custom CSS snippets are available on all devices.`)
+      .addToggle((toggle) => {
+        toggle
+          .setValue(this.plugin.settings.syncSnippets)
+          .onChange(async (value) => {
+            this.plugin.settings.syncSnippets = value;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("Exclude patterns")
+      .setDesc(
+        "One path or filename per line. Patterns apply only to the Obsidian config paths enabled above. " +
+        `A pattern with a / is matched as a path prefix (e.g. ${configDir}/themes/my-theme); a plain filename (no /) matches that filename within any synced config path.`,
+      );
+
+    const excludeArea = containerEl.createEl("textarea", {
+      cls: "octosync-exclude-paths",
+    });
+    excludeArea.rows = 4;
+    excludeArea.placeholder = `${configDir}/themes/my-theme`;
+    excludeArea.value = this.plugin.settings.syncExcludePaths.join("\n");
+    excludeArea.addEventListener("change", () => {
+      this.plugin.settings.syncExcludePaths = excludeArea.value
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+      void this.plugin.saveSettings();
+    });
   }
 
   private addDebugSettings(containerEl: HTMLElement): void {

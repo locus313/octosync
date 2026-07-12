@@ -1005,7 +1005,7 @@ export class SyncManager {
     );
   }
 
-  private shouldIgnorePath = (path: string): boolean => shouldIgnorePath(path, this.vault.configDir);
+  private shouldIgnorePath = (path: string): boolean => shouldIgnorePath(path, this.vault.configDir, getConfigAllowedPaths(this.settings, this.vault.configDir), this.settings.syncExcludePaths);
 }
 
 function createEmptySummary(): SyncSummary {
@@ -1247,16 +1247,72 @@ export class SyncConflictError extends Error {
   }
 }
 
-export function shouldIgnorePath(path: string, configDir: string): boolean {
+export function getConfigAllowedPaths(settings: OctosyncSettings, configDir: string): string[] {
+  const paths: string[] = [];
+
+  if (settings.syncCommunityPlugins) {
+    paths.push(`${configDir}/community-plugins.json`);
+  }
+
+  if (settings.syncThemes) {
+    paths.push(`${configDir}/themes`);
+  }
+
+  if (settings.syncSnippets) {
+    paths.push(`${configDir}/snippets`);
+  }
+
+  return paths;
+}
+
+export function shouldIgnorePath(path: string, configDir: string, allowedConfigPaths: string[] = [], excludePatterns: string[] = []): boolean {
   const configPrefix = configDir.endsWith("/") ? configDir : `${configDir}/`;
 
+  if (path === configDir || path.startsWith(configPrefix)) {
+    if (allowedConfigPaths.some((allowed) => {
+      const allowedPrefix = allowed.endsWith("/") ? allowed : `${allowed}/`;
+      return path === allowed || path.startsWith(allowedPrefix);
+    })) {
+      // Even inside an allowed config path, reserved filenames and Octosync's own
+      // empty-folder markers must still be excluded. Use filename-based matching so
+      // that e.g. .DS_Store inside a theme folder is treated the same as at the root.
+      const filename = path.split("/").pop() ?? "";
+
+      if (
+        RESERVED_FILES.has(filename) ||
+        isEmptyFolderMarkerPath(path) ||
+        excludePatterns.some((pattern) => matchesExcludePattern(path, pattern))
+      ) {
+        return true;
+      }
+
+      return false;
+    }
+
+    return true;
+  }
+
   return (
-    path === configDir ||
-    path.startsWith(configPrefix) ||
     RESERVED_FILES.has(path) ||
     isEmptyFolderMarkerPath(path) ||
     RESERVED_PREFIXES.some((prefix) => path.startsWith(prefix))
   );
+}
+
+/**
+ * Returns true when `path` matches `pattern`.
+ * - If `pattern` contains a `/`, it is treated as a path prefix: the path must equal the pattern
+ *   or start with `pattern + "/"`.
+ * - Otherwise the pattern is treated as a filename and is compared to the last path segment.
+ */
+export function matchesExcludePattern(path: string, pattern: string): boolean {
+  if (pattern.includes("/")) {
+    const prefix = pattern.endsWith("/") ? pattern : `${pattern}/`;
+    return path === pattern || path.startsWith(prefix);
+  }
+
+  const filename = path.split("/").pop() ?? "";
+  return filename === pattern;
 }
 
 function findFileConflicts(
