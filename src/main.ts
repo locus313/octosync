@@ -679,7 +679,7 @@ class SyncConfirmationModal extends Modal {
       text: "Octosync planned the sync without changing files. Review the summary before applying it.",
     });
 
-    const summaryEl = this.contentEl.createEl("div", {
+    const summaryEl = this.contentEl.createDiv({
       cls: "octosync-sync-plan-summary",
     });
 
