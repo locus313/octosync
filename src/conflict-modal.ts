@@ -20,7 +20,7 @@ export class ConflictResolutionModal extends Modal {
       text: `${this.conflicts.length} file${this.conflicts.length === 1 ? "" : "s"} changed both locally and on GitHub.`,
     });
 
-    const list = this.contentEl.createEl("div", { cls: "octosync-conflict-list" });
+    const list = this.contentEl.createDiv({ cls: "octosync-conflict-list" });
 
     for (const path of this.conflicts) {
       list.createDiv({ cls: "octosync-conflict-path", text: path });

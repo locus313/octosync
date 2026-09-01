@@ -51,6 +51,7 @@ export class OctosyncSettingTab extends PluginSettingTab {
     }
 
     this.addSyncSettings(containerEl);
+    this.addVaultExclusionSettings(containerEl);
     this.addObsidianSyncSettings(containerEl);
     this.addDebugSettings(containerEl);
     this.addActions(containerEl);
@@ -400,6 +401,31 @@ export class OctosyncSettingTab extends PluginSettingTab {
         .filter((line) => line.length > 0);
       void this.plugin.saveSettings();
     });
+  }
+
+  private addVaultExclusionSettings(containerEl: HTMLElement): void {
+    new Setting(containerEl)
+      .setName("Device-local exclusions")
+      .setHeading();
+
+    new Setting(containerEl)
+      .setName("Excluded vault paths")
+      .setDesc(
+        "One vault-relative folder path per line. On this device, matching folders and their contents are never uploaded, downloaded, deleted remotely, or treated as conflicts. Existing local files are left in place until you remove them yourself.",
+      )
+      .addTextArea((textArea) => {
+        textArea
+          .setPlaceholder("Personal\narchive/personal")
+          .setValue(this.plugin.settings.syncVaultExcludePaths.join("\n"));
+        textArea.inputEl.rows = 4;
+        textArea.inputEl.addEventListener("change", () => {
+          void this.plugin
+            .updateVaultExcludePaths(textArea.getValue().split("\n"))
+            .then(() => {
+              textArea.setValue(this.plugin.settings.syncVaultExcludePaths.join("\n"));
+            });
+        });
+      });
   }
 
   private addDebugSettings(containerEl: HTMLElement): void {

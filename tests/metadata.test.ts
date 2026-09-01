@@ -81,6 +81,24 @@ describe("MetadataStore", () => {
     expect(store.getFolder("empty")).toBeUndefined();
   });
 
+  it("prunes matching file and folder records", async () => {
+    const store = new MetadataStore(async () => null, async () => {});
+    await store.load();
+    store.update("Personal/note.md", { sha: "private" }, 1);
+    store.update("Work/note.md", { sha: "work" }, 1);
+    store.updateFolder("Personal/Empty", { markerSha: "private-folder" }, 1);
+    store.updateFolder("Work/Empty", { markerSha: "work-folder" }, 1);
+
+    expect(store.prunePaths((path) => path.startsWith("Personal/"))).toEqual({
+      files: 1,
+      folders: 1,
+    });
+    expect(store.get("Personal/note.md")).toBeUndefined();
+    expect(store.getFolder("Personal/Empty")).toBeUndefined();
+    expect(store.get("Work/note.md")?.sha).toBe("work");
+    expect(store.getFolder("Work/Empty")?.markerSha).toBe("work-folder");
+  });
+
   it("restores from a snapshot without sharing record objects", async () => {
     const snapshot: SyncMetadata = {
       version: 1,

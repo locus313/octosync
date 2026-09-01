@@ -9,9 +9,12 @@ import {
   formatSummary,
   getConfigAllowedPaths,
   getValidExtraHiddenDirs,
+  getValidVaultExcludePaths,
   hasUserVisibleSyncChanges,
   isValidExtraHiddenDir,
+  isVaultPathExcluded,
   matchesExcludePattern,
+  normalizeVaultExcludePath,
   shouldIgnorePath,
 } from "../src/sync";
 import { DEFAULT_SETTINGS, type OctosyncSettings, type RemoteFile } from "../src/types";
@@ -35,6 +38,7 @@ describe("sync helpers", () => {
       foldersDownloaded: 0,
       foldersDeletedLocal: 0,
       foldersDeletedRemote: 0,
+      excluded: 0,
       conflicts: [],
     };
 
@@ -53,10 +57,31 @@ describe("sync helpers", () => {
         foldersDownloaded: 6,
         foldersDeletedLocal: 7,
         foldersDeletedRemote: 8,
+        excluded: 0,
         conflicts: ["note.md"],
       }),
     ).toBe(
       "1 uploaded, 2 downloaded, 3 local deletions, 4 remote deletions, 5 folders uploaded, 6 folders downloaded, 7 local folder deletions, 8 remote folder deletions, 1 conflicts",
+    );
+  });
+
+  it("reports device-local exclusions without treating them as sync changes", () => {
+    const summary = {
+      uploaded: 0,
+      downloaded: 0,
+      deletedLocal: 0,
+      deletedRemote: 0,
+      foldersUploaded: 0,
+      foldersDownloaded: 0,
+      foldersDeletedLocal: 0,
+      foldersDeletedRemote: 0,
+      excluded: 2,
+      conflicts: [],
+    };
+
+    expect(hasUserVisibleSyncChanges(summary)).toBe(false);
+    expect(formatSummary(summary)).toBe(
+      "No sync required. Everything is up to date. 2 device-local paths excluded.",
     );
   });
 
@@ -184,6 +209,42 @@ describe("sync helpers", () => {
     };
 
     expect(getValidExtraHiddenDirs(dirtySettings)).toEqual([".copilot", ".claude"]);
+  });
+
+  it("normalizes safe device-local exclusions and rejects traversal or absolute paths", () => {
+    expect(normalizeVaultExcludePath(" Personal/Private/ ")).toBe("Personal/Private");
+    expect(normalizeVaultExcludePath("Work\\Private")).toBe("Work/Private");
+    expect(normalizeVaultExcludePath("/Personal")).toBeNull();
+    expect(normalizeVaultExcludePath("../Personal")).toBeNull();
+    expect(normalizeVaultExcludePath("Personal/../Work")).toBeNull();
+    expect(normalizeVaultExcludePath("Personal//Private")).toBeNull();
+  });
+
+  it("deduplicates device-local exclusions and removes redundant descendants", () => {
+    const dirtySettings = {
+      ...DEFAULT_SETTINGS,
+      syncVaultExcludePaths: [
+        "Personal/Private",
+        "Personal",
+        "Work\\Private",
+        "Work/Private/",
+        "../outside",
+      ],
+    };
+
+    expect(getValidVaultExcludePaths(dirtySettings)).toEqual(["Personal", "Work/Private"]);
+  });
+
+  it("matches device-local exclusions by path boundary", () => {
+    const exclusions = ["Personal", "Archive/Private"];
+
+    expect(isVaultPathExcluded("Personal", exclusions)).toBe(true);
+    expect(isVaultPathExcluded("Personal/Journal/note.md", exclusions)).toBe(true);
+    expect(isVaultPathExcluded("Archive/Private/note.md", exclusions)).toBe(true);
+    expect(isVaultPathExcluded("Personality/note.md", exclusions)).toBe(false);
+    expect(isVaultPathExcluded("Archive/Privateer/note.md", exclusions)).toBe(false);
+    expect(shouldIgnorePath("Personal/note.md", ".obsidian", [], [], [], exclusions)).toBe(true);
+    expect(shouldIgnorePath("Work/note.md", ".obsidian", [], [], [], exclusions)).toBe(false);
   });
 
   it("getConfigAllowedPaths returns correct paths based on settings", () => {
@@ -384,6 +445,150 @@ describe("SyncManager", () => {
 
     expect(summary.downloaded).toBe(0);
     expect(vault.exists("../outside-vault.md")).toBe(false);
+  });
+
+  it("keeps device-local excluded files out of uploads and downloads", async () => {
+    const vault = new MemoryVault();
+    const github = new MockGitHubClient();
+    const metadata = await createMetadata();
+    vault.addFile("Personal/local-only.md", "local private");
+    vault.addFile("Work/local.md", "local work");
+    await github.addRemoteFile("Personal/remote-only.md", "remote private");
+    await github.addRemoteFile("Work/remote.md", "remote work");
+
+    const summary = await createManager(vault, github, metadata, {
+      syncVaultExcludePaths: ["Personal"],
+    }).sync();
+
+    expect(summary).toMatchObject({ uploaded: 1, downloaded: 1, excluded: 2, conflicts: [] });
+    expect(github.remote.has("Personal/local-only.md")).toBe(false);
+    expect(vault.exists("Personal/remote-only.md")).toBe(false);
+    expect(await github.readRemoteText("Personal/remote-only.md")).toBe("remote private");
+    expect(await github.readRemoteText("Work/local.md")).toBe("local work");
+    expect(vault.readText("Work/remote.md")).toBe("remote work");
+  });
+
+  it("never turns a missing excluded local file into a remote deletion", async () => {
+    const vault = new MemoryVault();
+    const github = new MockGitHubClient();
+    const metadata = await createMetadata();
+    const sha = await github.addRemoteFile("Personal/private.md", "keep remotely");
+    metadata.update("Personal/private.md", { sha, dirty: false, deleted: false }, 1);
+    const manager = createManager(vault, github, metadata, {
+      syncVaultExcludePaths: ["Personal"],
+    });
+
+    expect(await manager.hasLocalChanges()).toBe(false);
+    expect(await manager.hasRemoteChanges()).toBe(false);
+    const summary = await manager.sync();
+
+    expect(summary).toMatchObject({ deletedRemote: 0, excluded: 1, conflicts: [] });
+    expect(await github.readRemoteText("Personal/private.md")).toBe("keep remotely");
+    expect(github.commits).toBe(0);
+  });
+
+  it("does not light change indicators for new files that exist only inside exclusions", async () => {
+    const vault = new MemoryVault();
+    const github = new MockGitHubClient();
+    const metadata = await createMetadata();
+    vault.addFile("Personal/local-only.md", "local private");
+    await github.addRemoteFile("Personal/remote-only.md", "remote private");
+    const manager = createManager(vault, github, metadata, {
+      syncVaultExcludePaths: ["Personal"],
+    });
+
+    expect(await manager.hasLocalChanges()).toBe(false);
+    expect(await manager.hasLocalChangesForPaths(new Set(["Personal/local-only.md"]))).toBe(false);
+    expect(await manager.hasRemoteChanges()).toBe(false);
+  });
+
+  it("never turns a missing excluded remote file into a local deletion", async () => {
+    const vault = new MemoryVault();
+    const github = new MockGitHubClient();
+    const metadata = await createMetadata();
+    const sha = await github.addBlob("keep locally");
+    vault.addFile("Personal/private.md", "keep locally");
+    metadata.update("Personal/private.md", { sha, dirty: false, deleted: false }, 1);
+
+    const summary = await createManager(vault, github, metadata, {
+      syncVaultExcludePaths: ["Personal"],
+    }).sync();
+
+    expect(summary).toMatchObject({ deletedLocal: 0, excluded: 1, conflicts: [] });
+    expect(vault.readText("Personal/private.md")).toBe("keep locally");
+  });
+
+  it("does not report or resolve conflicts inside device-local exclusions", async () => {
+    const vault = new MemoryVault();
+    const github = new MockGitHubClient();
+    const metadata = await createMetadata();
+    const oldSha = await github.addBlob("old");
+    metadata.update("Personal/private.md", { sha: oldSha, dirty: false, deleted: false }, 1);
+    vault.addFile("Personal/private.md", "local edit");
+    await github.addRemoteFile("Personal/private.md", "remote edit");
+    const manager = createManager(vault, github, metadata, {
+      syncVaultExcludePaths: ["Personal"],
+    });
+
+    const plan = await manager.planSync();
+    const resolution = await manager.resolveConflicts(["Personal/private.md"], "local");
+
+    expect(plan).toMatchObject({ excluded: 1, conflicts: [] });
+    expect(resolution).toMatchObject({ uploaded: 0, deletedRemote: 0, excluded: 1 });
+    expect(vault.readText("Personal/private.md")).toBe("local edit");
+    expect(await github.readRemoteText("Personal/private.md")).toBe("remote edit");
+    expect(github.commits).toBe(0);
+  });
+
+  it("does not materialize excluded remote empty folders", async () => {
+    const vault = new MemoryVault();
+    const github = new MockGitHubClient();
+    const metadata = await createMetadata();
+    vault.addFolder("Personal/Empty");
+    await github.addRemoteFile(
+      "Personal/Empty/.octosync-folder",
+      "Octosync placeholder for an empty Obsidian folder.\n",
+    );
+
+    const summary = await createManager(vault, github, metadata, {
+      syncVaultExcludePaths: ["Personal"],
+    }).sync();
+
+    expect(summary).toMatchObject({ foldersUploaded: 0, foldersDownloaded: 0, excluded: 1 });
+    expect(vault.exists("Personal/Empty")).toBe(true);
+    expect(github.remote.has("Personal/Empty/.octosync-folder")).toBe(true);
+  });
+
+  it("does not treat an included parent containing only excluded content as an empty folder", async () => {
+    const vault = new MemoryVault();
+    const github = new MockGitHubClient();
+    const metadata = await createMetadata();
+    vault.addFile("Work/Personal/private.md", "private");
+
+    const summary = await createManager(vault, github, metadata, {
+      syncVaultExcludePaths: ["Work/Personal"],
+    }).sync();
+
+    expect(summary).toMatchObject({ uploaded: 0, foldersUploaded: 0, excluded: 1 });
+    expect(github.remote.has("Work/.octosync-folder")).toBe(false);
+    expect(github.remote.has("Work/Personal/private.md")).toBe(false);
+  });
+
+  it("downloads rather than deletes remote content after exclusion metadata is pruned and the path is re-enabled", async () => {
+    const vault = new MemoryVault();
+    const github = new MockGitHubClient();
+    const metadata = await createMetadata();
+    const sha = await github.addRemoteFile("Personal/private.md", "restore me");
+    metadata.update("Personal/private.md", { sha, dirty: false, deleted: false }, 1);
+
+    expect(
+      metadata.prunePaths((path) => isVaultPathExcluded(path, ["Personal"])),
+    ).toEqual({ files: 1, folders: 0 });
+    const summary = await createManager(vault, github, metadata).sync();
+
+    expect(summary).toMatchObject({ downloaded: 1, deletedRemote: 0, conflicts: [] });
+    expect(vault.readText("Personal/private.md")).toBe("restore me");
+    expect(await github.readRemoteText("Personal/private.md")).toBe("restore me");
   });
 
   it("plans sync without changing local files, remote files, or metadata", async () => {
@@ -1241,13 +1446,14 @@ function createManager(
   vault: MemoryVault,
   github: MockGitHubClient,
   metadata: MetadataStore,
+  overrides: Partial<OctosyncSettings> = {},
 ): SyncManager {
   return new SyncManager(
     vault as never,
     { trashFile: (file: TFile | TFolder) => vault.delete(file) } as never,
     github as unknown as GitHubClient,
     metadata,
-    settings,
+    { ...settings, ...overrides },
     undefined,
   );
 }
