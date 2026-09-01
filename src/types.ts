@@ -18,6 +18,7 @@ export interface OctosyncSettings {
   syncCommunityPlugins: boolean;
   syncThemes: boolean;
   syncSnippets: boolean;
+  syncVaultExcludePaths: string[];
   syncExcludePaths: string[];
   syncExtraHiddenDirs: string[];
   debugLogging: boolean;
@@ -102,6 +103,7 @@ export interface SyncSummary {
   foldersDownloaded: number;
   foldersDeletedLocal: number;
   foldersDeletedRemote: number;
+  excluded: number;
   conflicts: string[];
 }
 
@@ -122,6 +124,7 @@ export const DEFAULT_SETTINGS: OctosyncSettings = {
   syncCommunityPlugins: false,
   syncThemes: false,
   syncSnippets: false,
+  syncVaultExcludePaths: [],
   syncExcludePaths: [],
   syncExtraHiddenDirs: [],
   debugLogging: false,

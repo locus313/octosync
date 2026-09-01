@@ -76,6 +76,8 @@ type FolderPlanAction =
 type IgnorePath = (path: string) => boolean;
 
 export class SyncManager {
+  private readonly vaultExcludePaths: string[];
+
   constructor(
     private readonly vault: Vault,
     private readonly fileManager: FileManager,
@@ -83,7 +85,9 @@ export class SyncManager {
     private readonly metadata: MetadataStore,
     private readonly settings: OctosyncSettings,
     private readonly debugLog?: DebugLogSink,
-  ) {}
+  ) {
+    this.vaultExcludePaths = getValidVaultExcludePaths(settings);
+  }
 
   async sync(options: SyncExecutionOptions = {}): Promise<SyncSummary> {
     const plan = await this.createSyncPlan();
@@ -280,6 +284,29 @@ export class SyncManager {
     });
 
     const localFolders = this.getLocalFolders();
+    const localEmptyFolders = this.getLocalEmptyFolders();
+    const remoteEmptyFolders = getRemoteEmptyFolders(remote.files);
+    const locallyExcludedPaths = this.getLocallyExcludedPaths();
+    const excludedPaths = new Set(
+      [
+        ...locallyExcludedPaths,
+        ...Array.from(allPaths).filter(
+          (path) =>
+            !isEmptyFolderMarkerPath(path) &&
+            isVaultPathExcluded(path, this.vaultExcludePaths),
+        ),
+      ],
+    );
+    for (const folderPath of [
+      ...localEmptyFolders,
+      ...remoteEmptyFolders.keys(),
+      ...Object.keys(this.metadata.data.folders),
+    ]) {
+      if (isVaultPathExcluded(folderPath, this.vaultExcludePaths)) {
+        excludedPaths.add(folderPath);
+      }
+    }
+    summary.excluded = excludedPaths.size;
     summary.conflicts = [
       ...findPathShapeConflicts(local, localFolders, remote.files, this.shouldIgnorePath),
       ...findFileConflicts(allPaths, local, remote.files, this.metadata, this.shouldIgnorePath),
@@ -369,11 +396,12 @@ export class SyncManager {
       local,
       fileActions,
       this.shouldIgnorePath,
+      locallyExcludedPaths,
     );
     const folderActions = planEmptyFolderActions(
       postFileLocalState.folders,
       postFileLocalState.emptyFolders,
-      getRemoteEmptyFolders(remote.files),
+      remoteEmptyFolders,
       this.metadata,
       summary,
       this.shouldIgnorePath,
@@ -566,6 +594,7 @@ export class SyncManager {
 
     const metadataSnapshot = cloneMetadata(this.metadata.data);
     const now = Date.now();
+    const activePaths = paths.filter((path) => !this.shouldIgnorePath(path));
     try {
       const remote = await this.getRemoteState();
       const local = await this.getLocalFiles();
@@ -578,11 +607,13 @@ export class SyncManager {
         foldersDownloaded: 0,
         foldersDeletedLocal: 0,
         foldersDeletedRemote: 0,
+        excluded: paths.length - activePaths.length,
         conflicts: [],
       };
       this.debugLog?.("conflict-resolution.scan", {
         resolution,
-        paths,
+        paths: activePaths,
+        excluded: paths.length - activePaths.length,
         localFiles: local.size,
         remoteFiles: remote.files.size,
       });
@@ -590,7 +621,7 @@ export class SyncManager {
       if (resolution === "local") {
         const treeUpdates = new Map<string, string | null>();
 
-        for (const path of paths) {
+        for (const path of activePaths) {
           const localFile = local.get(path);
 
           if (!localFile) {
@@ -612,7 +643,7 @@ export class SyncManager {
       } else {
         const treeUpdates = new Map<string, string | null>();
 
-        for (const path of paths) {
+        for (const path of activePaths) {
           const localFile = local.get(path);
           const remoteFile = remote.files.get(path);
 
@@ -825,7 +856,14 @@ export class SyncManager {
         continue;
       }
 
-      if (!file.path || file.path === "/" || this.shouldIgnorePath(`${file.path}/`)) {
+      if (
+        !file.path ||
+        file.path === "/" ||
+        (
+          this.shouldIgnorePath(`${file.path}/`) &&
+          !isVaultPathExcluded(file.path, this.vaultExcludePaths)
+        )
+      ) {
         continue;
       }
 
@@ -833,6 +871,29 @@ export class SyncManager {
     }
 
     return folders;
+  }
+
+  private getLocallyExcludedPaths(): Set<string> {
+    const paths = new Set<string>();
+
+    for (const file of this.vault.getFiles()) {
+      if (isVaultPathExcluded(file.path, this.vaultExcludePaths)) {
+        paths.add(file.path);
+      }
+    }
+
+    for (const file of this.vault.getAllLoadedFiles()) {
+      if (
+        file instanceof TFolder &&
+        file.path &&
+        file.children.length === 0 &&
+        isVaultPathExcluded(file.path, this.vaultExcludePaths)
+      ) {
+        paths.add(file.path);
+      }
+    }
+
+    return paths;
   }
 
   private async uploadBlob(file: LocalFileSnapshot): Promise<string> {
@@ -987,6 +1048,9 @@ export class SyncManager {
   private isLocalFolderEmpty(folder: TFolder): boolean {
     return folder.children.every((child) => {
       const childPath = child instanceof TFolder ? `${child.path}/` : child.path;
+      if (isVaultPathExcluded(child.path, this.vaultExcludePaths)) {
+        return false;
+      }
       return this.shouldIgnorePath(childPath);
     });
   }
@@ -1107,7 +1171,14 @@ export class SyncManager {
     );
   }
 
-  private shouldIgnorePath = (path: string): boolean => shouldIgnorePath(path, this.vault.configDir, getConfigAllowedPaths(this.settings, this.vault.configDir), this.settings.syncExcludePaths, getValidExtraHiddenDirs(this.settings));
+  private shouldIgnorePath = (path: string): boolean => shouldIgnorePath(
+    path,
+    this.vault.configDir,
+    getConfigAllowedPaths(this.settings, this.vault.configDir),
+    this.settings.syncExcludePaths,
+    getValidExtraHiddenDirs(this.settings),
+    this.vaultExcludePaths,
+  );
 }
 
 function createEmptySummary(): SyncSummary {
@@ -1120,6 +1191,7 @@ function createEmptySummary(): SyncSummary {
     foldersDownloaded: 0,
     foldersDeletedLocal: 0,
     foldersDeletedRemote: 0,
+    excluded: 0,
     conflicts: [],
   };
 }
@@ -1154,8 +1226,9 @@ function planPostFileLocalState(
   localFiles: Map<string, LocalFileSnapshot>,
   actions: FilePlanAction[],
   shouldIgnore: IgnorePath,
+  structuralPaths: Set<string> = new Set(),
 ): { folders: Set<string>; emptyFolders: Set<string> } {
-  const postFiles = new Set(localFiles.keys());
+  const postFiles = new Set([...localFiles.keys(), ...structuralPaths]);
   const postFolders = new Set(localFolders);
 
   for (const action of actions) {
@@ -1301,7 +1374,10 @@ function parentFolderPath(path: string): string {
 
 export function formatSummary(summary: SyncSummary): string {
   if (!hasUserVisibleSyncChanges(summary)) {
-    return "No sync required. Everything is up to date.";
+    const excluded = formatExcludedPaths(summary.excluded);
+    return excluded
+      ? `No sync required. Everything is up to date. ${excluded}.`
+      : "No sync required. Everything is up to date.";
   }
 
   const parts = [
@@ -1317,6 +1393,10 @@ export function formatSummary(summary: SyncSummary): string {
 
   if (summary.conflicts.length > 0) {
     parts.push(`${summary.conflicts.length} conflicts`);
+  }
+  const excluded = formatExcludedPaths(summary.excluded);
+  if (excluded) {
+    parts.push(excluded);
   }
 
   return parts.join(", ");
@@ -1379,7 +1459,66 @@ export function getValidExtraHiddenDirs(settings: OctosyncSettings): string[] {
   return settings.syncExtraHiddenDirs.filter(isValidExtraHiddenDir);
 }
 
-export function shouldIgnorePath(path: string, configDir: string, allowedConfigPaths: string[] = [], excludePatterns: string[] = [], extraHiddenDirs: string[] = []): boolean {
+export function normalizeVaultExcludePath(path: string): string | null {
+  const normalized = path.trim().replace(/\\/g, "/").replace(/\/+$/g, "");
+  if (!normalized || normalized.startsWith("/") || normalized.includes("\0")) {
+    return null;
+  }
+
+  const segments = normalized.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
+    return null;
+  }
+
+  return normalized;
+}
+
+export function getValidVaultExcludePaths(settings: OctosyncSettings): string[] {
+  const configured: unknown = settings.syncVaultExcludePaths;
+  if (!Array.isArray(configured)) {
+    return [];
+  }
+
+  const unique: string[] = [];
+  for (const value of configured) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const normalized = normalizeVaultExcludePath(value);
+    if (normalized && !unique.includes(normalized)) {
+      unique.push(normalized);
+    }
+  }
+
+  return unique.filter(
+    (path) => !unique.some((other) => other !== path && isPathAtOrBelow(path, other)),
+  );
+}
+
+export function isVaultPathExcluded(path: string, excludePaths: string[]): boolean {
+  const normalizedPath = normalizeVaultExcludePath(path);
+  if (!normalizedPath) {
+    return false;
+  }
+
+  return excludePaths.some((excludePath) => {
+    const normalizedExclude = normalizeVaultExcludePath(excludePath);
+    return normalizedExclude !== null && isPathAtOrBelow(normalizedPath, normalizedExclude);
+  });
+}
+
+export function shouldIgnorePath(
+  path: string,
+  configDir: string,
+  allowedConfigPaths: string[] = [],
+  excludePatterns: string[] = [],
+  extraHiddenDirs: string[] = [],
+  vaultExcludePaths: string[] = [],
+): boolean {
+  if (isVaultPathExcluded(path, vaultExcludePaths)) {
+    return true;
+  }
+
   const configPrefix = configDir.endsWith("/") ? configDir : `${configDir}/`;
 
   if (path === configDir || path.startsWith(configPrefix)) {
@@ -1447,6 +1586,17 @@ export function matchesExcludePattern(path: string, pattern: string): boolean {
 
   const filename = path.split("/").pop() ?? "";
   return filename === pattern;
+}
+
+function isPathAtOrBelow(path: string, parent: string): boolean {
+  return path === parent || path.startsWith(`${parent}/`);
+}
+
+function formatExcludedPaths(count: number): string {
+  if (!Number.isFinite(count) || count <= 0) {
+    return "";
+  }
+  return `${count} device-local path${count === 1 ? "" : "s"} excluded`;
 }
 
 function findFileConflicts(

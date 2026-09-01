@@ -11,6 +11,8 @@ import {
   type ConflictResolution,
   formatSummary,
   getValidExtraHiddenDirs,
+  getValidVaultExcludePaths,
+  isVaultPathExcluded,
   notifySummary,
   SyncConflictError,
   SyncManager,
@@ -58,6 +60,7 @@ export default class OctosyncPlugin extends Plugin {
       },
     );
     await this.metadata.load();
+    await this.pruneVaultExcludeMetadata();
 
     addIcon("octosync-logo", OCTOSYNC_ICON);
 
@@ -110,10 +113,27 @@ export default class OctosyncPlugin extends Plugin {
     };
     // Re-sanitize in case persisted data was manually edited or predates validation.
     this.settings.syncExtraHiddenDirs = getValidExtraHiddenDirs(this.settings);
+    this.settings.syncVaultExcludePaths = getValidVaultExcludePaths(this.settings);
   }
 
   async saveSettings(): Promise<void> {
     await this.savePluginData({ settings: this.settings });
+  }
+
+  async updateVaultExcludePaths(paths: string[]): Promise<void> {
+    this.settings.syncVaultExcludePaths = getValidVaultExcludePaths({
+      ...this.settings,
+      syncVaultExcludePaths: paths,
+    });
+    await this.saveSettings();
+    await this.pruneVaultExcludeMetadata();
+
+    this.dirtyLocalPaths = new Set(
+      Array.from(this.dirtyLocalPaths).filter(
+        (path) => !isVaultPathExcluded(path, this.settings.syncVaultExcludePaths),
+      ),
+    );
+    this.configureChangeIndicators();
   }
 
   getDebugLogText(): string {
@@ -223,7 +243,10 @@ export default class OctosyncPlugin extends Plugin {
   }
 
   private queueLocalChangePath(path: string): void {
-    if (!this.settings.localChangeIndicatorEnabled) {
+    if (
+      !this.settings.localChangeIndicatorEnabled ||
+      isVaultPathExcluded(path, this.settings.syncVaultExcludePaths)
+    ) {
       return;
     }
 
@@ -581,6 +604,17 @@ export default class OctosyncPlugin extends Plugin {
     }
   }
 
+  private async pruneVaultExcludeMetadata(): Promise<void> {
+    const excludedPaths = getValidVaultExcludePaths(this.settings);
+    const removed = this.metadata.prunePaths((path) => isVaultPathExcluded(path, excludedPaths));
+    if (removed.files === 0 && removed.folders === 0) {
+      return;
+    }
+
+    await this.metadata.save();
+    this.debugLog.write("metadata.pruned-device-local-exclusions", removed);
+  }
+
   private setPendingConflicts(conflicts: string[]): void {
     this.pendingConflictPaths = [...conflicts].sort();
     this.updateSyncUiState();
@@ -699,6 +733,7 @@ function getSummaryItems(summary: SyncSummary): Array<{
     { label: "Download empty folders", value: summary.foldersDownloaded },
     { label: "Delete local folders", value: summary.foldersDeletedLocal },
     { label: "Delete remote folders", value: summary.foldersDeletedRemote },
+    { label: "Excluded on this device", value: summary.excluded },
   ];
 }
 

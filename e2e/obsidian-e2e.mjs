@@ -80,6 +80,50 @@ async function main() {
       assert.equal(await github.readFile(branch, "local-e2e.md"), "local e2e\n");
     });
 
+    await runTest("device-local exclusions preserve GitHub files after local removal", async () => {
+      const trackedPath = "Personal/tracked.md";
+      const remoteOnlyPath = "Personal/remote-only.md";
+      const localOnlyPath = "Personal/local-only.md";
+
+      await github.writeFile(branch, trackedPath, "tracked private\n");
+      assert.match(await syncNow(page), /1 downloaded/);
+      await assertLocalFileContent(page, trackedPath, "tracked private\n");
+
+      await writeLocalFile(page, vaultPath, localOnlyPath, "never upload this\n");
+      await updateVaultExclusions(page, ["Personal"]);
+      await github.writeFile(branch, remoteOnlyPath, "remote private\n");
+      await deleteExcludedLocalPath(page, vaultPath, "Personal");
+
+      const simulation = await simulateSync(page);
+      assert.match(simulation, /No sync required/);
+      assert.match(simulation, /2 device-local paths excluded/);
+      assert.doesNotMatch(simulation, /[1-9][0-9]* remote deletions/);
+
+      const excludedSync = await syncNow(page);
+      assert.match(excludedSync, /2 device-local paths excluded/);
+      assert.equal(await github.readFile(branch, trackedPath), "tracked private\n");
+      assert.equal(await github.readFile(branch, remoteOnlyPath), "remote private\n");
+      assert.equal(await github.pathExists(branch, localOnlyPath), false);
+      await assertLocalPathAbsent(page, "Personal");
+
+      await page.evaluate(async () => {
+        const plugin = globalThis.app.plugins.plugins.octosync;
+        await plugin.refreshRemoteChangeIndicator();
+      });
+      const remoteIndicatorVisible = await page.evaluate(() =>
+        Boolean(document.querySelector(".workspace-ribbon .clickable-icon.has-remote-changes")),
+      );
+      assert.equal(remoteIndicatorVisible, false);
+
+      await updateVaultExclusions(page, []);
+      const restoredSync = await syncNow(page);
+      assert.match(restoredSync, /2 downloaded/);
+      assert.doesNotMatch(restoredSync, /[1-9][0-9]* remote deletions/);
+      await assertLocalFileContent(page, trackedPath, "tracked private\n");
+      await assertLocalFileContent(page, remoteOnlyPath, "remote private\n");
+      await assertLocalPathAbsent(page, localOnlyPath);
+    });
+
     await runTest("remote change polling lights the remote ribbon indicator", async () => {
       await github.writeFile(branch, "remote-only.md", "remote e2e\n");
       await page.evaluate(async () => {
@@ -249,6 +293,11 @@ async function main() {
       await github.deleteFile(branch, remoteFileLocalFolder);
       await assertLocalPathAbsent(page, localFileRemoteFolder);
       await assertLocalPathAbsent(page, `${remoteFileLocalFolder}/local.md`);
+      await resolveConflicts(
+        page,
+        [localFileRemoteFolder, remoteFileLocalFolder],
+        "remote",
+      );
     });
 
     await runTest("simulate reports local/remote conflict without applying changes", async () => {
@@ -808,6 +857,7 @@ async function openOctosyncSettings(page) {
       const bodyText = document.body.innerText;
       return (
         bodyText.includes("Sync mode") &&
+        bodyText.includes("Device-local exclusions") &&
         bodyText.includes("Unsynced local changes indicator") &&
         bodyText.includes("Remote changes indicator")
       );
@@ -856,6 +906,13 @@ async function simulateSync(page) {
   });
 }
 
+async function updateVaultExclusions(page, paths) {
+  await page.evaluate(async (excludePaths) => {
+    const plugin = globalThis.app.plugins.plugins.octosync;
+    await plugin.updateVaultExcludePaths(excludePaths);
+  }, paths);
+}
+
 async function resolveConflicts(page, paths, resolution) {
   return page.evaluate(
     async ({ paths, resolution }) => {
@@ -879,6 +936,16 @@ async function deleteLocalPath(page, vaultPath, filePath) {
   await fs.rm(path.join(vaultPath, filePath), { recursive: true, force: true });
   await assertLocalPathAbsent(page, filePath);
   await waitForRibbonClass(page, "has-local-changes");
+}
+
+async function deleteExcludedLocalPath(page, vaultPath, filePath) {
+  await fs.rm(path.join(vaultPath, filePath), { recursive: true, force: true });
+  await assertLocalPathAbsent(page, filePath);
+  await delay(1000);
+  const localIndicatorVisible = await page.evaluate(() =>
+    Boolean(document.querySelector(".workspace-ribbon .clickable-icon.has-local-changes")),
+  );
+  assert.equal(localIndicatorVisible, false);
 }
 
 async function createLocalFolder(page, vaultPath, folderPath) {

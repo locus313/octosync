@@ -124,6 +124,27 @@ export class MetadataStore {
   removeFolder(path: string): void {
     delete this.metadata.folders[path];
   }
+
+  prunePaths(shouldRemove: (path: string) => boolean): { files: number; folders: number } {
+    let files = 0;
+    let folders = 0;
+
+    for (const path of Object.keys(this.metadata.files)) {
+      if (shouldRemove(path)) {
+        delete this.metadata.files[path];
+        files += 1;
+      }
+    }
+
+    for (const path of Object.keys(this.metadata.folders)) {
+      if (shouldRemove(path)) {
+        delete this.metadata.folders[path];
+        folders += 1;
+      }
+    }
+
+    return { files, folders };
+  }
 }
 
 function isSyncMetadata(value: unknown): value is SyncMetadata {

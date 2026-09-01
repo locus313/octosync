@@ -15,6 +15,7 @@ Install from the [Obsidian Community Plugin directory](https://community.obsidia
 - Sync an Obsidian vault to a normal GitHub repository.
 - Use GitHub-backed sync on phones and non-dev machines without local Git.
 - Preview changes with simulation before applying them.
+- Keep selected vault folders off specific devices without deleting their GitHub copies.
 - Choose manual sync for full control or automatic sync for routine updates.
 - Keep `.obsidian/**` out of sync by default, avoiding token and device-specific settings leaks.
 - Detect conflicts and stop for a user decision instead of silently overwriting notes.
@@ -43,11 +44,26 @@ Manual mode can separately check GitHub for remote changes on an interval. That 
 
 **Sync community plugins** syncs `community-plugins.json` (the enabled-plugin ID list) and, after each sync, downloads and installs any enabled plugin that is missing locally. Plugin code (`manifest.json`, `main.js`, `styles.css`) is fetched from the plugin's own GitHub release, resolved via the official Obsidian community plugin registry — the same source Obsidian's built-in installer uses. Plugin data folders (settings, API keys/tokens) are never synced or downloaded.
 
+## Device-Local Exclusions
+
+**Excluded vault paths** accepts one vault-relative folder path per line, such as `Personal` or `Archive/Private`. The setting belongs to the current device. Matching folders and their contents are omitted from uploads, downloads, deletions, conflicts, empty-folder handling, and change indicators on that device, while their GitHub copies and other devices remain untouched.
+
+When an exclusion is enabled, Octosync forgets this device's old sync metadata for matching paths. That prevents a later local deletion from being interpreted as a GitHub deletion and ensures that removing the exclusion downloads the remote copy again. Existing local files are deliberately not deleted automatically.
+
+For a folder that is already present locally:
+
+1. Add the folder to **Excluded vault paths**.
+2. Run **Simulate sync** and confirm it reports the paths as device-local exclusions with no remote deletions.
+3. Remove the local folder manually.
+4. Run simulation once more before syncing.
+
+Device-local exclusions are a sync boundary, not an access-control boundary. Octosync still enumerates the repository tree, and the configured GitHub token can access the whole repository. Use separate vaults or repositories when a device must not have technical access to the excluded content.
+
 ## Safety Net
 
 Sync tools need a high bar because mistakes can damage a vault. Octosync includes unit tests for the sync engine and GitHub client, plus an Obsidian end-to-end suite that launches a disposable vault against a temporary GitHub branch.
 
-The automated tests cover settings UI behavior, simulation, local and remote change indicators, uploads, downloads, local deletes, remote deletes, empty folders, conflict detection, conflict resolution modes, and protection against partial changes when a sync stops on conflict.
+The automated tests cover settings UI behavior, simulation, local and remote change indicators, uploads, downloads, local deletes, remote deletes, device-local exclusions, empty folders, conflict detection, conflict resolution modes, and protection against partial changes when a sync stops on conflict.
 
 That testing does not remove the need for backups, especially while the plugin is young, but it gives the sync logic a real safety net rather than relying only on happy-path manual testing.
 
